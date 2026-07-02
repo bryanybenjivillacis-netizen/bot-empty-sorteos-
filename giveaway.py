@@ -1,11 +1,11 @@
 """
-giveaway.py — Giveaways con slash commands, Modal para crear, botón participar.
+giveaway.py — Giveaways con slash commands y Modal.
 
-Slash commands:
+Comandos:
   /gcreate                  — abre Modal (Premio, Duración, Canal)
   /gend    <message_id>     — termina giveaway antes de tiempo
   /greroll <message_id>     — rerollea ganador
-  /gbonus add    @user %    — da bonus de probabilidad
+  /gbonus add @user %       — da bonus de probabilidad
   /gbonus remove @user      — quita bonus
   /gbonus list              — lista bonus activos
 """
@@ -50,17 +50,16 @@ def _save_bonuses(guild_id: int, data: dict):
 # ── Helpers ───────────────────────────────────────────────────────────────────
 
 def _parse_duration(text: str) -> int | None:
-    """Convierte '1m', '2h', '1d' a segundos."""
     units = {"s": 1, "m": 60, "h": 3600, "d": 86400}
     text = text.strip().lower()
-    if text[-1] in units and text[:-1].isdigit():
+    if len(text) > 1 and text[-1] in units and text[:-1].isdigit():
         return int(text[:-1]) * units[text[-1]]
     if text.isdigit():
         return int(text)
     return None
 
 
-def _pick_winner(participants: list[int], bonuses: dict) -> int | None:
+def _pick_winner(participants: list, bonuses: dict) -> int | None:
     if not participants:
         return None
     pool = []
@@ -109,16 +108,17 @@ class GiveawayModal(discord.ui.Modal, title="Crear Giveaway"):
         self.cog = cog
 
     async def on_submit(self, interaction: discord.Interaction):
-        # Validar duración
         seconds = _parse_duration(self.duration.value)
         if not seconds or seconds < 10:
             return await interaction.response.send_message(
-                "Duración inválida. Usa `10m`, `2h`, `1d`, etc. Mínimo 10 segundos.",
+                "Duración inválida. Usa `10m`, `2h`, `1d`. Mínimo 10 segundos.",
                 ephemeral=True,
             )
 
-        # Buscar canal por nombre
-        channel = discord.utils.get(interaction.guild.text_channels, name=self.channel_name.value.strip())
+        channel = discord.utils.get(
+            interaction.guild.text_channels,
+            name=self.channel_name.value.strip()
+        )
         if not channel:
             return await interaction.response.send_message(
                 f"No encontré el canal `{self.channel_name.value}`. Verifica el nombre exacto.",
@@ -129,8 +129,8 @@ class GiveawayModal(discord.ui.Modal, title="Crear Giveaway"):
 
         end_time = datetime.now(timezone.utc) + timedelta(seconds=seconds)
         embed = _build_embed(self.prize.value, end_time, participants=0)
-
         msg = await channel.send(embed=embed)
+
         view = JoinView(self.cog, interaction.guild.id, msg.id)
         await msg.edit(view=view)
 
@@ -196,6 +196,58 @@ class JoinView(discord.ui.View):
         await interaction.followup.send(msg, ephemeral=True)
 
 
+# ── Grupo /gbonus ─────────────────────────────────────────────────────────────
+
+class GbonusGroup(app_commands.Group, name="gbonus", description="Gestión de bonus en giveaways"):
+
+    @app_commands.command(name="add", description="Da bonus de probabilidad a un usuario")
+    @app_commands.describe(usuario="Usuario", porcentaje="Bonus entre 3 y 50")
+    @app_commands.checks.has_permissions(manage_guild=True)
+    async def add(self, interaction: discord.Interaction, usuario: discord.Member, porcentaje: int):
+        if porcentaje < 3 or porcentaje > 50:
+            return await interaction.response.send_message(
+                "El bonus debe estar entre `3%` y `50%`.", ephemeral=True
+            )
+        bonuses = _get_bonuses(interaction.guild.id)
+        bonuses[str(usuario.id)] = porcentaje
+        _save_bonuses(interaction.guild.id, bonuses)
+        await interaction.response.send_message(
+            f"{usuario.mention} tiene **+{porcentaje}%** de probabilidad en giveaways.",
+            ephemeral=True,
+        )
+
+    @app_commands.command(name="remove", description="Quita el bonus de un usuario")
+    @app_commands.describe(usuario="Usuario")
+    @app_commands.checks.has_permissions(manage_guild=True)
+    async def remove(self, interaction: discord.Interaction, usuario: discord.Member):
+        bonuses = _get_bonuses(interaction.guild.id)
+        if str(usuario.id) not in bonuses:
+            return await interaction.response.send_message(
+                f"{usuario.mention} no tiene bonus.", ephemeral=True
+            )
+        del bonuses[str(usuario.id)]
+        _save_bonuses(interaction.guild.id, bonuses)
+        await interaction.response.send_message(
+            f"Bonus eliminado para {usuario.mention}.", ephemeral=True
+        )
+
+    @app_commands.command(name="list", description="Lista todos los bonus activos")
+    @app_commands.checks.has_permissions(manage_guild=True)
+    async def list(self, interaction: discord.Interaction):
+        bonuses = _get_bonuses(interaction.guild.id)
+        if not bonuses:
+            return await interaction.response.send_message(
+                "No hay bonus activos.", ephemeral=True
+            )
+        lines = []
+        for uid, pct in bonuses.items():
+            member = interaction.guild.get_member(int(uid))
+            name = member.mention if member else f"`{uid}`"
+            lines.append(f"{name} — **+{pct}%**")
+        embed = discord.Embed(title="Bonus activos", description="\n".join(lines), color=0x2b2d31)
+        await interaction.response.send_message(embed=embed, ephemeral=True)
+
+
 # ── Cog ──────────────────────────────────────────────────────────────────────
 
 class Giveaway(commands.Cog):
@@ -205,7 +257,6 @@ class Giveaway(commands.Cog):
 
     @commands.Cog.listener()
     async def on_ready(self):
-        # Restaurar giveaways activos al reiniciar
         for guild in self.bot.guilds:
             giveaways = _get_giveaways(guild.id)
             for msg_id, data in giveaways.items():
@@ -261,8 +312,6 @@ class Giveaway(commands.Cog):
         giveaways[str(message_id)] = data
         _save_giveaways(guild_id, giveaways)
 
-    # ── Slash commands ────────────────────────────────────────────────────────
-
     @app_commands.command(name="gcreate", description="Crea un giveaway")
     @app_commands.checks.has_permissions(manage_guild=True)
     async def gcreate(self, interaction: discord.Interaction):
@@ -304,60 +353,7 @@ class Giveaway(commands.Cog):
                 "Sin participantes para rerollear.", ephemeral=True
             )
 
-    # ── /gbonus ───────────────────────────────────────────────────────────────
-
-    gbonus_group = app_commands.Group(name="gbonus", description="Gestión de bonus en giveaways")
-
-    @gbonus_group.command(name="add", description="Da bonus de probabilidad a un usuario")
-    @app_commands.describe(usuario="Usuario a quien dar el bonus", porcentaje="Bonus entre 3 y 50")
-    @app_commands.checks.has_permissions(manage_guild=True)
-    async def gbonus_add(self, interaction: discord.Interaction,
-                         usuario: discord.Member, porcentaje: int):
-        if porcentaje < 3 or porcentaje > 50:
-            return await interaction.response.send_message(
-                "El bonus debe estar entre `3%` y `50%`.", ephemeral=True
-            )
-        bonuses = _get_bonuses(interaction.guild.id)
-        bonuses[str(usuario.id)] = porcentaje
-        _save_bonuses(interaction.guild.id, bonuses)
-        await interaction.response.send_message(
-            f"{usuario.mention} tiene ahora **+{porcentaje}%** de probabilidad en giveaways.",
-            ephemeral=True,
-        )
-
-    @gbonus_group.command(name="remove", description="Quita el bonus de un usuario")
-    @app_commands.describe(usuario="Usuario a quien quitar el bonus")
-    @app_commands.checks.has_permissions(manage_guild=True)
-    async def gbonus_remove(self, interaction: discord.Interaction, usuario: discord.Member):
-        bonuses = _get_bonuses(interaction.guild.id)
-        if str(usuario.id) not in bonuses:
-            return await interaction.response.send_message(
-                f"{usuario.mention} no tiene bonus.", ephemeral=True
-            )
-        del bonuses[str(usuario.id)]
-        _save_bonuses(interaction.guild.id, bonuses)
-        await interaction.response.send_message(
-            f"Bonus eliminado para {usuario.mention}.", ephemeral=True
-        )
-
-    @gbonus_group.command(name="list", description="Lista todos los bonus activos")
-    @app_commands.checks.has_permissions(manage_guild=True)
-    async def gbonus_list(self, interaction: discord.Interaction):
-        bonuses = _get_bonuses(interaction.guild.id)
-        if not bonuses:
-            return await interaction.response.send_message(
-                "No hay bonus activos.", ephemeral=True
-            )
-        lines = []
-        for uid, pct in bonuses.items():
-            member = interaction.guild.get_member(int(uid))
-            name = member.mention if member else f"`{uid}`"
-            lines.append(f"{name} — **+{pct}%**")
-        embed = discord.Embed(title="Bonus activos", description="\n".join(lines), color=0x2b2d31)
-        await interaction.response.send_message(embed=embed, ephemeral=True)
-
 
 async def setup(bot: commands.Bot):
-    cog = Giveaway(bot)
-    bot.tree.add_command(cog.gbonus_group)
-    await bot.add_cog(cog)
+    await bot.add_cog(Giveaway(bot))
+    bot.tree.add_command(GbonusGroup())
