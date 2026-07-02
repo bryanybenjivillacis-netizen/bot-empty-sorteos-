@@ -27,11 +27,19 @@ class Bot(commands.Bot):
                 import traceback
                 log.error(f"Failed to load {cog}:\n{traceback.format_exc()}")
 
+        # Sync global primero para registrar los comandos
+        await self.tree.sync()
+        log.info("Global sync done.")
+
     async def on_ready(self):
         log.info(f"Ready: {self.user} ({self.user.id})")
+        # Sync por guild para que aparezcan inmediato
         for guild in self.guilds:
-            await self.tree.sync(guild=guild)
-        log.info(f"Slash commands synced to {len(self.guilds)} guild(s).")
+            try:
+                await self.tree.sync(guild=guild)
+                log.info(f"Synced to {guild.name}")
+            except Exception as e:
+                log.error(f"Sync failed for {guild.name}: {e}")
 
 
 async def main():
