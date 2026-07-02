@@ -1,13 +1,13 @@
 """
-invites.py — Sistema de tracking de invitaciones con slash commands.
+invites.py — Tracking de invitaciones con slash commands.
 
-Slash commands:
-  /setinvite channel  #canal          — canal de notificaciones
-  /setinvite threshold <n> [recompensa] — milestone + texto de recompensa
-  /setinvite altdays  <1-7>           — días mínimos para no ser alt
-  /invites   [@user]                  — ver invitaciones de alguien
-  /invitetop                          — top 5 inviters
-  /resetinvites                       — reiniciar estadísticas
+Comandos:
+  /setinvite channel  #canal
+  /setinvite threshold <n> [recompensa]
+  /setinvite altdays  <1-7>
+  /invites   [@user]
+  /invitetop
+  /resetinvites
 """
 
 import discord
@@ -64,6 +64,65 @@ def _build_milestone_embed(inviter: discord.Member, count: int,
     embed.set_thumbnail(url=inviter.display_avatar.url)
     embed.set_footer(text=inviter.guild.name)
     return embed
+
+
+# ── Grupo /setinvite ──────────────────────────────────────────────────────────
+
+class SetinviteGroup(app_commands.Group, name="setinvite", description="Configuración de invitaciones"):
+
+    @app_commands.command(name="channel", description="Canal de notificaciones de milestone")
+    @app_commands.describe(canal="Canal de texto")
+    @app_commands.checks.has_permissions(manage_guild=True)
+    async def channel(self, interaction: discord.Interaction, canal: discord.TextChannel):
+        cfg = _get_config(interaction.guild.id)
+        cfg["channel_id"] = canal.id
+        _save_config(interaction.guild.id, cfg)
+        await interaction.response.send_message(
+            embed=discord.Embed(description=f"Canal configurado: {canal.mention}", color=0x57f287),
+            ephemeral=True,
+        )
+
+    @app_commands.command(name="threshold", description="Milestone de invitaciones y recompensa")
+    @app_commands.describe(
+        numero="Cada cuántas invitaciones notifica",
+        recompensa="Texto de recompensa (opcional)",
+    )
+    @app_commands.checks.has_permissions(manage_guild=True)
+    async def threshold(self, interaction: discord.Interaction, numero: int, recompensa: str = ""):
+        if numero < 1:
+            return await interaction.response.send_message(
+                "El umbral debe ser al menos `1`.", ephemeral=True
+            )
+        cfg = _get_config(interaction.guild.id)
+        cfg["threshold"] = numero
+        cfg["reward"] = recompensa.strip()
+        _save_config(interaction.guild.id, cfg)
+        desc = f"Notificación cada `{numero}` invitaciones."
+        if recompensa:
+            desc += "\nRecompensa: " + recompensa.strip()
+        await interaction.response.send_message(
+            embed=discord.Embed(description=desc, color=0x57f287),
+            ephemeral=True,
+        )
+
+    @app_commands.command(name="altdays", description="Días mínimos de cuenta para no ser alt")
+    @app_commands.describe(dias="Entre 1 y 7")
+    @app_commands.checks.has_permissions(manage_guild=True)
+    async def altdays(self, interaction: discord.Interaction, dias: int):
+        if dias < 1 or dias > 7:
+            return await interaction.response.send_message(
+                "El valor debe estar entre `1` y `7`.", ephemeral=True
+            )
+        cfg = _get_config(interaction.guild.id)
+        cfg["altdays"] = dias
+        _save_config(interaction.guild.id, cfg)
+        await interaction.response.send_message(
+            embed=discord.Embed(
+                description=f"Cuentas menores a `{dias}` días serán ignoradas.",
+                color=0x57f287,
+            ),
+            ephemeral=True,
+        )
 
 
 # ── Cog ──────────────────────────────────────────────────────────────────────
@@ -164,71 +223,9 @@ class Invites(commands.Cog):
     async def on_invite_delete(self, invite: discord.Invite):
         _invite_cache.get(invite.guild.id, {}).pop(invite.code, None)
 
-    # ── /setinvite ────────────────────────────────────────────────────────────
-
-    setinvite = app_commands.Group(name="setinvite", description="Configuración del sistema de invitaciones")
-
-    @setinvite.command(name="channel", description="Canal donde se mandan las notificaciones de milestone")
-    @app_commands.describe(canal="Canal de texto")
-    @app_commands.checks.has_permissions(manage_guild=True)
-    async def setinvite_channel(self, interaction: discord.Interaction, canal: discord.TextChannel):
-        cfg = _get_config(interaction.guild.id)
-        cfg["channel_id"] = canal.id
-        _save_config(interaction.guild.id, cfg)
-        await interaction.response.send_message(
-            embed=discord.Embed(description=f"Canal configurado: {canal.mention}", color=0x57f287),
-            ephemeral=True,
-        )
-
-    @setinvite.command(name="threshold", description="Milestone de invitaciones + texto de recompensa")
-    @app_commands.describe(
-        numero="Cada cuántas invitaciones notifica",
-        recompensa="Texto de recompensa (opcional). Ej: tiene 10% más de ganar en giveaways",
-    )
-    @app_commands.checks.has_permissions(manage_guild=True)
-    async def setinvite_threshold(self, interaction: discord.Interaction,
-                                   numero: int, recompensa: str = ""):
-        if numero < 1:
-            return await interaction.response.send_message(
-                "El umbral debe ser al menos `1`.", ephemeral=True
-            )
-        cfg = _get_config(interaction.guild.id)
-        cfg["threshold"] = numero
-        cfg["reward"] = recompensa.strip()
-        _save_config(interaction.guild.id, cfg)
-        desc = f"Notificación cada `{numero}` invitaciones."
-        if recompensa:
-            desc += "\nRecompensa: " + recompensa.strip()
-        await interaction.response.send_message(
-            embed=discord.Embed(description=desc, color=0x57f287),
-            ephemeral=True,
-        )
-
-    @setinvite.command(name="altdays", description="Días mínimos de cuenta para no ser detectado como alt")
-    @app_commands.describe(dias="Entre 1 y 7 días")
-    @app_commands.checks.has_permissions(manage_guild=True)
-    async def setinvite_altdays(self, interaction: discord.Interaction, dias: int):
-        if dias < 1 or dias > 7:
-            return await interaction.response.send_message(
-                "El valor debe estar entre `1` y `7`.", ephemeral=True
-            )
-        cfg = _get_config(interaction.guild.id)
-        cfg["altdays"] = dias
-        _save_config(interaction.guild.id, cfg)
-        await interaction.response.send_message(
-            embed=discord.Embed(
-                description=f"Cuentas menores a `{dias}` días serán ignoradas como alts.",
-                color=0x57f287,
-            ),
-            ephemeral=True,
-        )
-
-    # ── /invites ──────────────────────────────────────────────────────────────
-
     @app_commands.command(name="invites", description="Ver cuántas invitaciones tiene alguien")
-    @app_commands.describe(usuario="Usuario a consultar (deja vacío para verte a ti)")
-    async def invites_cmd(self, interaction: discord.Interaction,
-                          usuario: discord.Member = None):
+    @app_commands.describe(usuario="Usuario a consultar (vacío = tú)")
+    async def invites_cmd(self, interaction: discord.Interaction, usuario: discord.Member = None):
         target = usuario or interaction.user
         cfg = _get_config(interaction.guild.id)
         count = cfg.get("counts", {}).get(str(target.id), 0)
@@ -246,7 +243,7 @@ class Invites(commands.Cog):
         counts = cfg.get("counts", {})
         if not counts:
             return await interaction.response.send_message(
-                "No hay datos de invitaciones aún.", ephemeral=True
+                "No hay datos aún.", ephemeral=True
             )
         sorted_counts = sorted(counts.items(), key=lambda x: x[1], reverse=True)[:5]
         medals = ["🥇", "🥈", "🥉", "4️⃣", "5️⃣"]
@@ -275,6 +272,5 @@ class Invites(commands.Cog):
 
 
 async def setup(bot: commands.Bot):
-    cog = Invites(bot)
-    bot.tree.add_command(cog.setinvite)
-    await bot.add_cog(cog)
+    await bot.add_cog(Invites(bot))
+    bot.tree.add_command(SetinviteGroup())
