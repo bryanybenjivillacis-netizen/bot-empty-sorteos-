@@ -1,46 +1,31 @@
 """
-config.py — JSON database (thread-safe).
+config.py — MongoDB database (persistent across deploys).
 """
 
-import json
 import os
-import threading
+from pymongo import MongoClient
 
-DB_PATH = "data/db.json"
 DEFAULT_PREFIX = ","
+
+_client = MongoClient(os.getenv("MONGO_URI"))
+_db = _client["bot"]
+_guilds = _db["guilds"]
 
 
 class Database:
-    def __init__(self):
-        self._lock = threading.Lock()
-        os.makedirs("data", exist_ok=True)
-        if not os.path.exists(DB_PATH):
-            with open(DB_PATH, "w") as f:
-                json.dump({}, f)
-
-    def _read(self) -> dict:
-        with open(DB_PATH, "r") as f:
-            return json.load(f)
-
-    def _write(self, data: dict):
-        with open(DB_PATH, "w") as f:
-            json.dump(data, f, indent=2)
-
-    def get(self, key: str, default=None):
-        with self._lock:
-            data = self._read()
-            return data.get(key, default)
-
     def get_guild(self, guild_id: int) -> dict:
-        with self._lock:
-            data = self._read()
-            return data.get("guilds", {}).get(str(guild_id), {})
+        doc = _guilds.find_one({"_id": str(guild_id)})
+        if doc:
+            doc.pop("_id", None)
+        return doc or {}
 
     def update_guild(self, guild_id: int, config: dict):
-        with self._lock:
-            data = self._read()
-            data.setdefault("guilds", {})[str(guild_id)] = config
-            self._write(data)
+        config.pop("_id", None)
+        _guilds.replace_one({"_id": str(guild_id)}, {"_id": str(guild_id), **config}, upsert=True)
+
+    def get(self, key: str, default=None):
+        doc = _db["meta"].find_one({"_id": key})
+        return doc.get("value", default) if doc else default
 
 
 db = Database()
