@@ -186,13 +186,9 @@ class Invites(commands.Cog):
         if member.id not in invited_by[uid]:
             invited_by[uid].append(member.id)
         cfg["invited_by"] = invited_by
-        _save_config(guild.id, cfg)
 
         threshold = cfg.get("threshold", 5)
         channel_id = cfg.get("channel_id")
-        if not channel_id:
-            return
-
         count = counts[uid]
         milestones = cfg.get("milestones", {})
         last_milestone = milestones.get(uid, 0)
@@ -201,19 +197,25 @@ class Invites(commands.Cog):
         if current_milestone > last_milestone and current_milestone > 0:
             milestones[uid] = current_milestone
             cfg["milestones"] = milestones
-            _save_config(guild.id, cfg)
 
-            channel = guild.get_channel(int(channel_id))
-            inviter_member = guild.get_member(inviter.id)
-            if channel and inviter_member:
-                try:
-                    reward = cfg.get("reward", "")
-                    invited_ids = cfg.get("invited_by", {}).get(uid, [])
-                    await channel.send(embed=_build_milestone_embed(
-                        inviter_member, current_milestone, reward, invited_ids
-                    ))
-                except discord.Forbidden:
-                    pass
+        # Una sola escritura al final
+        _save_config(guild.id, cfg)
+        log.info(f"[{guild.name}] {inviter} ahora tiene {count} invitaciones")
+
+        if not channel_id or not (current_milestone > last_milestone and current_milestone > 0):
+            return
+
+        channel = guild.get_channel(int(channel_id))
+        inviter_member = guild.get_member(inviter.id)
+        if channel and inviter_member:
+            try:
+                reward = cfg.get("reward", "")
+                invited_ids = cfg.get("invited_by", {}).get(uid, [])
+                await channel.send(embed=_build_milestone_embed(
+                    inviter_member, current_milestone, reward, invited_ids
+                ))
+            except discord.Forbidden:
+                pass
 
     @commands.Cog.listener()
     async def on_invite_create(self, invite: discord.Invite):
