@@ -228,10 +228,11 @@ class Invites(commands.Cog):
     @app_commands.command(name="invites", description="Ver cuántas invitaciones tiene alguien")
     @app_commands.describe(usuario="Usuario a consultar (vacío = tú)")
     async def invites_cmd(self, interaction: discord.Interaction, usuario: discord.Member = None):
+        await interaction.response.defer(ephemeral=True)
         target = usuario or interaction.user
         cfg = _get_config(interaction.guild.id)
         count = cfg.get("counts", {}).get(str(target.id), 0)
-        await interaction.response.send_message(
+        await interaction.followup.send(
             embed=discord.Embed(
                 description=f"{target.mention} tiene **{count}** invitaciones.",
                 color=0x2b2d31,
@@ -241,12 +242,11 @@ class Invites(commands.Cog):
 
     @app_commands.command(name="invitetop", description="Top 5 usuarios con más invitaciones")
     async def invitetop(self, interaction: discord.Interaction):
+        await interaction.response.defer(ephemeral=True)
         cfg = _get_config(interaction.guild.id)
         counts = cfg.get("counts", {})
         if not counts:
-            return await interaction.response.send_message(
-                "No hay datos aún.", ephemeral=True
-            )
+            return await interaction.followup.send("No hay datos aún.", ephemeral=True)
         sorted_counts = sorted(counts.items(), key=lambda x: x[1], reverse=True)[:5]
         medals = ["🥇", "🥈", "🥉", "4️⃣", "5️⃣"]
         lines = []
@@ -254,7 +254,7 @@ class Invites(commands.Cog):
             member = interaction.guild.get_member(int(uid))
             name = member.mention if member else f"`{uid}`"
             lines.append(f"{medals[i]} {name} — **{count}** invitaciones")
-        await interaction.response.send_message(
+        await interaction.followup.send(
             embed=discord.Embed(title="Top 5 Inviters", description="\n".join(lines), color=0x2b2d31),
             ephemeral=True,
         )
@@ -262,12 +262,13 @@ class Invites(commands.Cog):
     @app_commands.command(name="resetinvites", description="Reinicia todas las estadísticas de invitaciones")
     @app_commands.checks.has_permissions(manage_guild=True)
     async def resetinvites(self, interaction: discord.Interaction):
+        await interaction.response.defer(ephemeral=True)
         cfg = _get_config(interaction.guild.id)
         cfg["counts"] = {}
         cfg["milestones"] = {}
         cfg["invited_by"] = {}
         _save_config(interaction.guild.id, cfg)
-        await interaction.response.send_message(
+        await interaction.followup.send(
             embed=discord.Embed(description="Estadísticas reiniciadas.", color=0xed4245),
             ephemeral=True,
         )
